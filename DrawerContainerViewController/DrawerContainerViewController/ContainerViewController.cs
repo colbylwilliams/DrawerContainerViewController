@@ -8,25 +8,31 @@ namespace DrawerContainerViewController
 {
 	public class ContainerViewController : UIViewController
 	{
+		public event EventHandler<DrawerTransitioningEventArgs> DrawerTransitioning;
+
 		UIViewController LeftViewController;
-		UIViewController MainViewController;
+		UIViewController TopViewController;
+
+		UIView TopView => TopViewController?.View;
+		UIView LeftView => LeftViewController?.View;
 
 		UIPanGestureRecognizer LtrPanGestureRecognizer;
 		UITapGestureRecognizer TapGestureRecognizer;
 
 		bool pendingStatusBarAppearanceUpdate;
 
-		static CGRect LeftViewControllerFrame => UIScreen.MainScreen.Bounds;
-		static CGRect MainViewControllerFrame => UIScreen.MainScreen.Bounds;
+		static CGRect LeftViewFrame => UIScreen.MainScreen.Bounds;
+		static CGRect TopViewFrame => UIScreen.MainScreen.Bounds;
 
-		static CGRect MainViewControllerFrameOpen => new CGRect (DrawerWidth, MainViewControllerFrame.Y, MainViewControllerFrame.Width, MainViewControllerFrame.Height);
+		static CGRect TopViewFrameOpen => new CGRect (DrawerWidth, TopViewFrame.Y, TopViewFrame.Width, TopViewFrame.Height);
 
 
 		public static nfloat DrawerWidth { get; set; } = 300;
 
 		public bool HideStatusBarOnDrawerOpen { get; set; } = true;
 
-		public bool DrawerOpen => MainViewController?.View.Frame == MainViewControllerFrameOpen;
+		public bool DrawerOpen => TopView?.Frame == TopViewFrameOpen;
+
 
 
 		#region Constuctors
@@ -36,11 +42,15 @@ namespace DrawerContainerViewController
 			commonInit ();
 		}
 
-
-		void commonInit ()
+		public ContainerViewController (UIViewController topViewController, UIViewController leftViewController)
 		{
-			View.Frame = MainViewControllerFrame;
+			commonInit ();
+
+			SetTopViewController (topViewController);
+			SetLeftViewController (leftViewController);
 		}
+
+		void commonInit () => View.Frame = TopViewFrame;
 
 		#endregion
 
@@ -60,15 +70,15 @@ namespace DrawerContainerViewController
 		{
 			base.ViewWillAppear (animated);
 
-			MainViewController?.View.AddGestureRecognizer (TapGestureRecognizer);
-			MainViewController?.View.AddGestureRecognizer (LtrPanGestureRecognizer);
+			TopView?.AddGestureRecognizer (TapGestureRecognizer);
+			TopView?.AddGestureRecognizer (LtrPanGestureRecognizer);
 		}
 
 
 		public override void ViewWillDisappear (bool animated)
 		{
-			MainViewController?.View.RemoveGestureRecognizer (TapGestureRecognizer);
-			MainViewController?.View.RemoveGestureRecognizer (LtrPanGestureRecognizer);
+			TopView?.RemoveGestureRecognizer (TapGestureRecognizer);
+			TopView?.RemoveGestureRecognizer (LtrPanGestureRecognizer);
 
 			base.ViewWillDisappear (animated);
 		}
@@ -78,7 +88,7 @@ namespace DrawerContainerViewController
 
 		#region StatusBar
 
-		public override bool PrefersStatusBarHidden () => HideStatusBarOnDrawerOpen && MainViewController?.View.Frame.X > 0;
+		public override bool PrefersStatusBarHidden () => HideStatusBarOnDrawerOpen && TopView?.Frame.X > 0;
 
 		public override UIStatusBarAnimation PreferredStatusBarUpdateAnimation => UIStatusBarAnimation.Slide;
 
@@ -95,11 +105,14 @@ namespace DrawerContainerViewController
 
 			UIView.AnimateNotify (0.2, () => {
 
-				MainViewController.View.Frame = MainViewControllerFrame;
+				TopView.Frame = TopViewFrame;
 
 			}, (finished) => {
 
+				DrawerTransitioning?.Invoke (this, new DrawerTransitioningEventArgs (DrawerTransitioningState.Closed));
+
 				updateStatusBarAppearance ();
+
 			});
 		}
 
@@ -109,8 +122,10 @@ namespace DrawerContainerViewController
 			TapGestureRecognizer.Enabled = false;
 
 			var finished = await UIView.AnimateNotifyAsync (0.2, () => {
-				MainViewController.View.Frame = MainViewControllerFrame;
+				TopView.Frame = TopViewFrame;
 			});
+
+			DrawerTransitioning?.Invoke (this, new DrawerTransitioningEventArgs (DrawerTransitioningState.Closed));
 
 			updateStatusBarAppearance ();
 
@@ -122,7 +137,12 @@ namespace DrawerContainerViewController
 
 		#region GestureRecognizers
 
-		void handleTapGesture (UITapGestureRecognizer tap) => CloseDrawer ();
+		void handleTapGesture (UITapGestureRecognizer tap)
+		{
+			DrawerTransitioning?.Invoke (this, new DrawerTransitioningEventArgs (DrawerTransitioningState.Transitioning));
+
+			CloseDrawer ();
+		}
 
 
 		void handleLtrPanGesture (UIPanGestureRecognizer pan)
@@ -147,21 +167,23 @@ namespace DrawerContainerViewController
 					}
 
 					// if panning up or down more than left-to-right, kill this gesture recognizer
-					// to allow only the MainViewControllers scrollview, tableview, etc. to scroll 
+					// to allow only the TopViewControllers scrollview, tableview, etc. to scroll 
 					if (NMath.Abs (ltrCurrentTranslation.Y) > ltrCurrentTranslation.X) {
 						pan.Enabled = false;
 						return;
 					}
 
-					var frame = MainViewControllerFrame;
+					var frame = TopViewFrame;
 
 					frame.X += ltrCurrentTranslation.X;
 
-					MainViewController.View.Frame = frame;
+					TopView.Frame = frame;
 
 					if (pendingStatusBarAppearanceUpdate) {
 
 						pendingStatusBarAppearanceUpdate = false;
+
+						DrawerTransitioning?.Invoke (this, new DrawerTransitioningEventArgs (DrawerTransitioningState.Transitioning));
 
 						updateStatusBarAppearance ();
 					}
@@ -173,16 +195,25 @@ namespace DrawerContainerViewController
 
 					pan.Enabled = true;
 
+					// the TopView's frame was never moved because the pan was the wrong direction
+					// or the pan was a vertical scroll, so no reason to do anything here
+					if (pendingStatusBarAppearanceUpdate) {
+						pendingStatusBarAppearanceUpdate = false;
+						return;
+					}
+
 					// if the drawer has been opened at least 50%, finish opening, otherwise close
-					var finalFrame = MainViewController.View.Frame.X > (DrawerWidth / 2) ? MainViewControllerFrameOpen : MainViewControllerFrame;
+					var finalFrame = TopView.Frame.X > (DrawerWidth / 2) ? TopViewFrameOpen : TopViewFrame;
 
 					UIView.AnimateNotify (0.1, () => {
 
-						MainViewController.View.Frame = finalFrame;
+						TopView.Frame = finalFrame;
 
 					}, (finished) => {
 
 						TapGestureRecognizer.Enabled = DrawerOpen;
+
+						DrawerTransitioning?.Invoke (this, new DrawerTransitioningEventArgs (DrawerOpen ? DrawerTransitioningState.Open : DrawerTransitioningState.Closed));
 
 						updateStatusBarAppearance ();
 					});
@@ -196,17 +227,25 @@ namespace DrawerContainerViewController
 
 		#region ChildViewControllers
 
-		public void SetMainViewController (UIViewController mainViewController)
+		public void SetTopViewController (UIViewController mainViewController)
 		{
-			MainViewController = mainViewController;
+			TopViewController = mainViewController;
 
-			AddChildViewController (MainViewController);
+			AddChildViewController (TopViewController);
 
-			MainViewController.View.Frame = MainViewControllerFrame;
+			TopView.Frame = TopViewFrame;
 
-			View.AddSubview (MainViewController.View);
+			var layer = TopView.Layer;
 
-			MainViewController.DidMoveToParentViewController (this);
+			layer.ShadowPath = UIBezierPath.FromRect (TopView.Bounds).CGPath;
+			layer.ShadowColor = UIColor.Black.CGColor;
+			layer.ShadowOpacity = 1;
+			layer.ShadowOffset = new CGSize (0, 2.5);
+			layer.ShadowRadius = 2.5f;
+
+			View.AddSubview (TopView);
+
+			TopViewController.DidMoveToParentViewController (this);
 		}
 
 
@@ -216,23 +255,20 @@ namespace DrawerContainerViewController
 
 			AddChildViewController (LeftViewController);
 
-			LeftViewController.View.Frame = LeftViewControllerFrame;
+			LeftView.Frame = LeftViewFrame;
 
-			if (MainViewController?.View.IsDescendantOfView (View) ?? false) {
-				View.InsertSubviewBelow (LeftViewController.View, MainViewController.View);
+			if (TopView?.IsDescendantOfView (View) ?? false) {
+
+				View.InsertSubviewBelow (LeftView, TopView);
+
 			} else {
-				View.AddSubview (LeftViewController.View);
+
+				View.AddSubview (LeftView);
 			}
 
 			LeftViewController.DidMoveToParentViewController (this);
 		}
 
 		#endregion
-	}
-
-
-	public class PanGestureRecognizerDelegate : UIGestureRecognizerDelegate
-	{
-		public override bool ShouldRecognizeSimultaneously (UIGestureRecognizer gestureRecognizer, UIGestureRecognizer otherGestureRecognizer) => true;
 	}
 }

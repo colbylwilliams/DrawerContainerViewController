@@ -122,6 +122,7 @@
     <Compile Include="LeftTestTableViewController.designer.cs">
       <DependentUpon>LeftTestTableViewController.cs</DependentUpon>
     </Compile>
+    <Compile Include="TestTableViewController.cs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\DrawerContainerViewController\DrawerContainerViewController.csproj">
